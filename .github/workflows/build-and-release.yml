@@ -1,0 +1,106 @@
+name: Build and Release OpenWrt x86 (BMQ)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build OpenWrt (x86, BMQ)
+    runs-on: ubuntu-latest
+    timeout-minutes: 720
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build deps
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential ccache git python3 python3-pip subversion \
+            libncurses5-dev gawk gettext unzip rsync squashfs-tools libssl-dev file xz-utils
+
+      - name: Clone OpenWrt
+        run: |
+          git clone --depth 1 https://git.openwrt.org/openwrt/openwrt.git openwrt
+
+      - name: Fetch linux-prjc (BMQ) and create kernel tarball
+        run: |
+          git clone --depth 1 --branch linux-6.6.y-prjc-lts https://gitlab.com/alfredchen/linux-prjc.git linux-prjc-src
+          mkdir -p openwrt/dl
+          tar -C linux-prjc-src -cJf openwrt/dl/linux-6.6.119-prjc.tar.xz .
+
+      - name: Copy BMQ patches into OpenWrt
+        run: |
+          if [ -d bmq-patches ]; then mkdir -p openwrt/target/linux/x86/patches-6.6/ || true; cp -r bmq-patches/* openwrt/target/linux/x86/patches-6.6/ || true; fi
+
+      - name: Build OpenWrt
+        working-directory: openwrt
+        run: |
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+          make defconfig
+          make -j$(nproc) V=s || (sleep 10 && make -j1 V=s)
+
+      - name: Package image artifact
+        run: |
+          mkdir -p dist
+          cp openwrt/bin/targets/x86/64/*.img dist/ || true
+          ls -lh dist || true
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: openwrt-x86-squashfs
+          path: dist/*
+
+  create-release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release
+          find artifacts -type f -maxdepth 2 -exec cp {} release/ \;
+          ls -lh release || true
+
+      - name: Generate release tag
+        id: tag
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            TAG=${GITHUB_REF#refs/tags/}
+          else
+            TIMESTAMP=$(date -u +"%Y%m%d-%H%M%S")
+            TAG="openwrt-bmq-${TIMESTAMP}"
+          fi
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "timestamp=$(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> $GITHUB_OUTPUT
+
+      - name: Calculate checksums
+        run: |
+          cd release || exit 1
+          sha256sum * > SHA256SUMS.txt || true
+          cat SHA256SUMS.txt || true
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: OpenWrt x86 BMQ ${{ steps.tag.outputs.tag }}
+          files: release/*
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
