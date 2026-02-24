@@ -16,8 +16,6 @@ name: Build and Release OpenWrt x86/64 (BMQ)
 
 on:
   workflow_dispatch:
-  push:
-    branches: [ main ]
 
 permissions:
   contents: write
