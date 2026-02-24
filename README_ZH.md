@@ -170,28 +170,63 @@ squashfs 变体是大多数使用场景的推荐选择——体积更小，只�
 
 ## 使用方法
 
-从 Releases 页面下载镜像后，可以按以下方式使用：
+### 方式一：全新安装（dd / QEMU）
+
+从裸机开始全新安装？从 Releases 页面下载镜像，直接写入磁盘或 U 盘。
 
 ```bash
-# 解压缩
+# 先解压镜像
 gunzip openwrt-*-squashfs-combined.img.gz
 
-# 写入 USB 闪存盘或磁盘——请谨慎替换 /dev/sdX
+# 写入磁盘或 U 盘——执行前请务必确认 /dev/sdX 正确
 dd if=openwrt-*-squashfs-combined.img of=/dev/sdX bs=4M status=progress
 sync
+```
 
-# 或者跳过硬件，直接用 QEMU 测试
+想在动硬件之前先测试一下？用 QEMU 非常方便：
+
+```bash
 qemu-system-x86_64 \
   -drive file=openwrt-*-squashfs-combined.img,format=raw \
   -m 256m -nographic
 ```
 
-启动后你将进入标准的 OpenWrt shell。包管理、网络配置及其他所有操作与上游完全一致——唯一的区别是底层运行的 CPU 调度器。
+### 方式二：通过 LuCI 网页界面刷写（Sysupgrade）
+
+已经在跑 OpenWrt，只想升级到这个 BMQ 构建版本？不需要物理接触设备，也不需要 `dd`——LuCI 网页界面就能搞定。
+
+前往 **LuCI → System → Backup / Flash Firmware**，向下滚动到 **Flash new firmware image** 区域，上传你的文件即可。
+
+> [!IMPORTANT]
+> **直接上传 `.img.gz` 文件——不要提前解压。** LuCI 会透明地处理 gzip 压缩。
+
+**选对文件非常关键。参考下表：**
+
+| 你的启动模式 | 要上传的文件 |
+|---|---|
+| Legacy BIOS / MBR | `openwrt-x86-64-generic-squashfs-combined.img.gz` |
+| UEFI / EFI | `openwrt-x86-64-generic-squashfs-combined-efi.img.gz` |
+
+不确定自己用的是哪种启动模式？在 OpenWrt shell 里运行这条命令：
 
 ```bash
-# 启动后验证 BMQ 是否激活
+ls /sys/firmware/efi 2>/dev/null && echo "EFI" || echo "Legacy BIOS"
+```
+
+> [!WARNING]
+> **千万不要用 `ext4` 镜像做 sysupgrade。** ext4 变体完全不支持 sysupgrade 路径——它们只用于通过 `dd` 进行全新安装。OpenWrt 的 sysupgrade 机制依赖 SquashFS + overlayfs 结构来在升级时保存你的配置。ext4 格式没有 overlay 文件系统，通过网页界面刷入 ext4 镜像要么直接失败，要么让设备无法启动。
+
+上传好正确的文件后，选择是否 **Keep settings**（勾选则保留现有配置），点击 **Flash image**，在确认页面核对校验和，然后点击 **Proceed**。设备会自动重启进入新的 BMQ 构建版本。
+
+### 验证 BMQ 是否激活
+
+无论是全新刷写还是 sysupgrade，启动后都确认一下调度器是否正在运行：
+
+```bash
+# 查看当前激活的调度器特性
 cat /sys/kernel/debug/sched/features
-# 或检查 dmesg 中的调度器初始化信息
+
+# 或查找调度器初始化信息
 dmesg | grep -i sched
 ```
 

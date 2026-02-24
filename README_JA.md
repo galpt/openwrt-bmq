@@ -170,28 +170,63 @@ squashfs バリアントがほとんどのユースケースで推奨される�
 
 ## 使い方
 
-Releases ページからイメージを入手したら、以下の方法で使用できます：
+### オプション 1：クリーンインストール（dd / QEMU）
+
+ベアメタルでゼロから始めますか？Releases ページからイメージをダウンロードして、ディスクまたは USB スティックに直接書き込みます。
 
 ```bash
-# 解凍
+# まずイメージを解凍する
 gunzip openwrt-*-squashfs-combined.img.gz
 
-# USB スティックまたはディスクに書き込む——/dev/sdX は慎重に確認してから変更
+# ディスクまたは USB スティックに書き込む——実行前に /dev/sdX を必ず確認すること
 dd if=openwrt-*-squashfs-combined.img of=/dev/sdX bs=4M status=progress
 sync
+```
 
-# またはハードウェアなしで QEMU でテスト
+ハードウェアに触れる前にテストしたいですか？QEMU が最適です：
+
+```bash
 qemu-system-x86_64 \
   -drive file=openwrt-*-squashfs-combined.img,format=raw \
   -m 256m -nographic
 ```
 
-起動後は標準の OpenWrt シェルに入ります。パッケージ管理、ネットワーク設定、その他すべてはアップストリームと同様に動作します——唯一の違いは、その下で動作する CPU スケジューラです。
+### オプション 2：LuCI Web UI から書き込む（Sysupgrade）
+
+すでに OpenWrt が動いていて、この BMQ ビルドにアップグレードしたいだけですか？物理アクセスも `dd` も不要です——LuCI の Web UI だけで完結します。
+
+**LuCI → System → Backup / Flash Firmware** に移動し、**Flash new firmware image** セクションまでスクロールして、ファイルをアップロードします。
+
+> [!IMPORTANT]
+> **`.img.gz` ファイルはそのままアップロードしてください——解凍しないでください。** LuCI が gzip 圧縮を透過的に処理します。
+
+**正しいファイルを選ぶことが非常に重要です。以下の表を参照してください：**
+
+| あなたのブートモード | アップロードするファイル |
+|---|---|
+| Legacy BIOS / MBR | `openwrt-x86-64-generic-squashfs-combined.img.gz` |
+| UEFI / EFI | `openwrt-x86-64-generic-squashfs-combined-efi.img.gz` |
+
+自分のマシンがどのブートモードか分からない場合は、OpenWrt のシェルでこのコマンドを実行してください：
 
 ```bash
-# ブート後に BMQ が有効か確認
+ls /sys/firmware/efi 2>/dev/null && echo "EFI" || echo "Legacy BIOS"
+```
+
+> [!WARNING]
+> **sysupgrade に `ext4` イメージを使用しないでください。** ext4 バリアントは sysupgrade パスに対応していません——これらは `dd` によるクリーンインストール専用です。OpenWrt の sysupgrade 機構は、アップグレード時に設定を保持するために SquashFS + overlayfs の構造に依存しています。ext4 フォーマットにはオーバーレイファイルシステムがないため、Web UI 経由でフラッシュしようとすると、処理が失敗するか、デバイスが起動不能な状態になります。
+
+正しいファイルをアップロードしたら、**Keep settings** を選択し（既存の設定を保持したい場合はチェックを入れたまま）、**Flash image** をクリックし、確認画面でチェックサムを確認してから **Proceed** をクリックします。デバイスは新しい BMQ ビルドで自動的に再起動します。
+
+### BMQ が有効かどうかを確認する
+
+クリーンフラッシュでも sysupgrade でも、起動後にスケジューラが動作していることを確認しましょう：
+
+```bash
+# アクティブなスケジューラの機能を確認
 cat /sys/kernel/debug/sched/features
-# またはスケジューラの初期化メッセージを dmesg で確認
+
+# またはスケジューラの初期化メッセージを確認
 dmesg | grep -i sched
 ```
 

@@ -170,28 +170,63 @@ Varian squashfs adalah pilihan yang direkomendasikan untuk sebagian besar use ca
 
 ## Penggunaan
 
-Setelah kamu mengambil image dari halaman Releases, ini cara menggunakannya:
+### Opsi 1: Fresh Install (dd / QEMU)
+
+Mulai dari nol di bare metal? Unduh image dari halaman Releases lalu tulis langsung ke disk atau USB stick.
 
 ```bash
-# Dekompresi
+# Dekompresi image terlebih dahulu
 gunzip openwrt-*-squashfs-combined.img.gz
 
-# Tulis ke USB stick atau disk — ganti /dev/sdX dengan hati-hati
+# Tulis ke disk atau USB stick — pastikan /dev/sdX sudah benar sebelum dijalankan
 dd if=openwrt-*-squashfs-combined.img of=/dev/sdX bs=4M status=progress
 sync
+```
 
-# Atau skip hardware dan langsung test dengan QEMU
+Mau test dulu sebelum menyentuh hardware? Pakai QEMU:
+
+```bash
 qemu-system-x86_64 \
   -drive file=openwrt-*-squashfs-combined.img,format=raw \
   -m 256m -nographic
 ```
 
-Setelah boot kamu akan masuk ke shell OpenWrt standar. Manajemen paket, konfigurasi jaringan, dan segalanya bekerja sama seperti upstream — satu-satunya perbedaan adalah CPU scheduler yang berjalan di bawahnya.
+### Opsi 2: Flash via LuCI Web UI (Sysupgrade)
+
+Sudah punya OpenWrt yang berjalan dan mau upgrade ke build BMQ ini? Kamu tidak perlu akses fisik atau `dd` — LuCI web UI menanganinya dengan bersih.
+
+Buka **LuCI → System → Backup / Flash Firmware**, scroll ke bawah ke bagian **Flash new firmware image**, lalu upload file kamu.
+
+> [!IMPORTANT]
+> **Upload file `.img.gz` langsung — jangan didekompresi dulu.** LuCI menangani gzip secara transparan.
+
+**Memilih file yang tepat itu penting banget. Gunakan tabel ini:**
+
+| Mode boot kamu | File yang diupload |
+|---|---|
+| Legacy BIOS / MBR | `openwrt-x86-64-generic-squashfs-combined.img.gz` |
+| UEFI / EFI | `openwrt-x86-64-generic-squashfs-combined-efi.img.gz` |
+
+Tidak yakin mode boot mesinmu? Jalankan ini di shell OpenWrt:
 
 ```bash
-# Verifikasi BMQ aktif setelah boot
+ls /sys/firmware/efi 2>/dev/null && echo "EFI" || echo "Legacy BIOS"
+```
+
+> [!WARNING]
+> **Jangan pernah gunakan image `ext4` untuk sysupgrade.** Varian ext4 sama sekali tidak mendukung jalur sysupgrade — mereka hanya untuk fresh install via `dd`. Mekanisme sysupgrade OpenWrt bergantung pada struktur SquashFS + overlayfs untuk menyimpan konfigurasi kamu saat upgrade. Format ext4 tidak memiliki overlay filesystem, jadi mem-flash-nya lewat web UI akan gagal total atau membuat perangkat kamu tidak bisa boot.
+
+Setelah kamu upload file yang tepat, pilih apakah mau **Keep settings** (biarkan dicentang untuk mempertahankan konfigurasi yang ada), klik **Flash image**, verifikasi checksum di layar konfirmasi, lalu klik **Proceed**. Perangkat akan reboot ke build BMQ yang baru secara otomatis.
+
+### Verifikasi BMQ Aktif
+
+Baik setelah fresh flash maupun sysupgrade, konfirmasi scheduler berjalan setelah boot:
+
+```bash
+# Cek fitur scheduler yang aktif
 cat /sys/kernel/debug/sched/features
-# atau cek dmesg untuk pesan inisialisasi scheduler
+
+# Atau cari pesan inisialisasi scheduler
 dmesg | grep -i sched
 ```
 
