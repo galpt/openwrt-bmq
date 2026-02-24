@@ -6,8 +6,7 @@ What happens when you take OpenWrt — the gold standard of open-source router
 firmware — and swap its CPU scheduler for something completely different? That
 is exactly what this repository is here to find out.
 
-This is an experiment. We are replacing the vanilla Linux CFS (Completely Fair
-Scheduler) inside an OpenWrt x86/64 build with **BMQ (BitMap Queue)**, an
+This is an experiment. We are replacing the vanilla Linux EEVDF (Earliest Eligible Virtual Deadline First) scheduler inside an OpenWrt x86/64 build with **BMQ (BitMap Queue)**, an
 alternative CPU scheduler authored by Alfred Chen and maintained in the
 [`linux-prjc`](https://gitlab.com/alfredchen/linux-prjc) kernel tree. The whole
 thing is wired up with a GitHub Actions pipeline so every deliberate build
@@ -38,13 +37,13 @@ produces a ready-to-flash firmware image, no manual intervention required.
 
 ## Why Change the CPU Scheduler?
 
-Honest answer first: if you are running OpenWrt on a small embedded router with 128 MB of RAM and a single-core MIPS CPU, you probably do not need this. The default CFS (Completely Fair Scheduler) will serve you just fine.
+Honest answer first: if you are running OpenWrt on a small embedded router with 128 MB of RAM and a single-core MIPS CPU, you probably do not need this. The default EEVDF (Earliest Eligible Virtual Deadline First) scheduler will serve you just fine.
 
 But x86 hardware is a different story. When you have a mini PC or a repurposed desktop running OpenWrt, you start doing things that embedded routers were never meant to do — Docker containers, SQM with fq_codel or CAKE for traffic shaping, maybe a few self-hosted services on the side. Suddenly your router is a general-purpose computer that *also* happens to route packets, and the CPU is juggling a very mixed workload.
 
-This is where an alternative scheduler like BMQ can quietly make a real difference. BMQ (BitMap Queue) was designed to keep latency-sensitive tasks responsive even when the CPU is pegged at 100%. Under heavy load, SQM algorithms like CAKE need to run their packet scheduling logic without getting starved by background tasks. Docker containers need their CPU slices delivered consistently. With the default CFS, all of these tasks compete in a way that can introduce jitter under pressure. BMQ handles that competition differently — its bitmap-based priority queuing tends to keep interactive and latency-sensitive workloads snappy even when something else is hammering the CPU in the background.
+This is where an alternative scheduler like BMQ can quietly make a real difference. BMQ (BitMap Queue) was designed to keep latency-sensitive tasks responsive even when the CPU is pegged at 100%. Under heavy load, SQM algorithms like CAKE need to run their packet scheduling logic without getting starved by background tasks. Docker containers need their CPU slices delivered consistently. With the default EEVDF, all of these tasks compete in a way that can introduce jitter under pressure. BMQ handles that competition differently — its bitmap-based priority queuing tends to keep interactive and latency-sensitive workloads snappy even when something else is hammering the CPU in the background.
 
-So why BMQ specifically and not something newer? Excellent question — there are plenty of interesting schedulers out there. EEVDF landed in mainline Linux, BORE is getting a lot of attention, LAVD looks promising for interactive workloads, and LFBMQ is the direct evolution of BMQ itself. The honest reason we picked BMQ is that this is our *first attempt* at injecting a custom scheduler into an OpenWrt build, and we did not want to be adventurous with something we could not test thoroughly. BMQ has a long track record on the linux-prjc tree, the 6.6 LTS patches are mature and well-maintained, and it felt like the most responsible starting point.
+So why BMQ specifically and not something newer? Excellent question — there are plenty of interesting schedulers out there. BORE is getting a lot of attention, LAVD looks promising for interactive workloads, and LFBMQ is the direct evolution of BMQ itself. The honest reason we picked BMQ is that this is our *first attempt* at injecting a custom scheduler into an OpenWrt build, and we did not want to be adventurous with something we could not test thoroughly. BMQ has a long track record on the linux-prjc tree, the 6.6 LTS patches are mature and well-maintained, and it felt like the most responsible starting point.
 
 There is also a hard constraint we cannot work around right now: OpenWrt v24.10.5 still ships with Linux 6.6.x. BORE, LAVD, and LFBMQ all require kernel 6.10 or newer to apply cleanly. Until OpenWrt bumps its kernel version, those options are simply out of reach. BMQ on 6.6 is what we have — and for the use case described above, it is a perfectly reasonable thing to experiment with.
 
