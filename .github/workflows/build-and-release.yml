@@ -49,6 +49,11 @@ jobs:
         run: |
           mkdir -p dist
           cp openwrt/bin/targets/x86/64/*.img dist/ || true
+          # fail early if no images were generated, avoids empty release jobs
+          if [ -z "$(ls -A dist)" ]; then
+            echo "error: no firmware images produced" >&2
+            exit 1
+          fi
           ls -lh dist || true
 
       - name: Upload build artifacts
@@ -73,7 +78,13 @@ jobs:
       - name: Prepare release assets
         run: |
           mkdir -p release
-          find artifacts -type f -maxdepth 2 -exec cp {} release/ \;
+          if [ -d artifacts ]; then
+            # copy whatever was downloaded; if directory doesn't exist the
+            # download-artifact step found nothing and we just continue
+            find artifacts -type f -maxdepth 2 -exec cp {} release/ \;
+          else
+            echo "warning: no artifacts were downloaded, skipping copy"
+          fi
           ls -lh release || true
 
       - name: Generate release tag
