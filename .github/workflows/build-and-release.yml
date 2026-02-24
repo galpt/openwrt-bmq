@@ -1,4 +1,18 @@
-name: Build and Release OpenWrt x86 (BMQ)
+name: Build and Release OpenWrt x86/64 (BMQ)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# What this workflow does
+# ─────────────────────────────────────────────────────────────────────────────
+# 1. Clones OpenWrt v24.10.5 (latest stable; uses Linux 6.6.x).
+# 2. Tells OpenWrt's build system to pull the kernel from the linux-prjc
+#    repository (branch linux-6.6.y-prjc-lts) via CONFIG_KERNEL_GIT_CLONE_URI.
+#    This is the official OpenWrt mechanism for custom kernels and bypasses the
+#    normal tarball hash check automatically.
+# 3. Enables the BMQ (BitMap Queue) CPU scheduler via a kernel config fragment
+#    appended to target/linux/x86/config-6.6.
+# 4. Builds squashfs + ext4 x86/64 combined images.
+# 5. Publishes the .img.gz images plus a SHA256SUMS.txt as a GitHub Release.
+# ─────────────────────────────────────────────────────────────────────────────
 
 on:
   workflow_dispatch:
@@ -9,107 +23,230 @@ permissions:
   contents: write
 
 jobs:
+  # ───────────────────────────────────────────────────────────────────────────
   build:
-    name: Build OpenWrt (x86, BMQ)
+  # ───────────────────────────────────────────────────────────────────────────
+    name: Build OpenWrt x86/64 with BMQ Scheduler
     runs-on: ubuntu-latest
     timeout-minutes: 720
+
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install build deps
+      # ── Dependencies ────────────────────────────────────────────────────────
+      - name: Install build dependencies
         run: |
-          sudo apt update
-          sudo apt install -y build-essential ccache git python3 python3-pip subversion \
-            libncurses5-dev gawk gettext unzip rsync squashfs-tools libssl-dev file xz-utils
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential ccache clang flex bison g++ gawk \
+            gcc-multilib g++-multilib gettext git libfuse-dev \
+            libncurses5-dev libssl-dev python3-setuptools \
+            rsync subversion swig unzip util-linux wget \
+            xsltproc zlib1g-dev file python3 python3-pip \
+            squashfs-tools xz-utils quilt
 
-      - name: Clone OpenWrt
+      # ── OpenWrt source ──────────────────────────────────────────────────────
+      - name: Clone OpenWrt v24.10.5
         run: |
-          git clone --depth 1 https://git.openwrt.org/openwrt/openwrt.git openwrt
+          git clone --depth 1 --branch v24.10.5 \
+            https://github.com/openwrt/openwrt.git openwrt
 
-      - name: Fetch linux-prjc (BMQ) and create kernel tarball
-        run: |
-          git clone --depth 1 --branch linux-6.6.y-prjc-lts https://gitlab.com/alfredchen/linux-prjc.git linux-prjc-src
-          mkdir -p openwrt/dl
-          tar -C linux-prjc-src -cJf openwrt/dl/linux-6.6.119-prjc.tar.xz .
-
-      - name: Copy BMQ patches into OpenWrt
-        run: |
-          if [ -d bmq-patches ]; then mkdir -p openwrt/target/linux/x86/patches-6.6/ || true; cp -r bmq-patches/* openwrt/target/linux/x86/patches-6.6/ || true; fi
-
-      - name: Build OpenWrt
+      # ── Feeds ───────────────────────────────────────────────────────────────
+      - name: Update and install feeds
         working-directory: openwrt
         run: |
           ./scripts/feeds update -a
           ./scripts/feeds install -a
-          make defconfig
-          make -j$(nproc) V=s || (sleep 10 && make -j1 V=s)
 
-      - name: Package image artifact
+      # ── Build configuration ─────────────────────────────────────────────────
+      # CONFIG_KERNEL_GIT_CLONE_URI tells OpenWrt to clone the kernel from a
+      # custom git URL instead of downloading the vanilla tarball.  When this
+      # option is set LINUX_KERNEL_HASH defaults to "x" (no hash check) and
+      # the build system derives a unique LINUX_VERSION string from the URL and
+      # ref, so downstream package names remain consistent.
+      #
+      # The linux-prjc branch linux-6.6.y-prjc-lts is based on Linux 6.6.44
+      # with the BMQ / PDS alternative scheduler series applied on top.
+      # OpenWrt v24.10.5 uses KERNEL_PATCHVER=6.6 for x86, so the toolchain
+      # and driver patches are compatible with the 6.6.x kernel family.
+      - name: Write build configuration
+        working-directory: openwrt
         run: |
-          mkdir -p dist
-          cp openwrt/bin/targets/x86/64/*.img dist/ || true
-          # fail early if no images were generated, avoids empty release jobs
-          if [ -z "$(ls -A dist)" ]; then
-            echo "error: no firmware images produced" >&2
-            exit 1
-          fi
-          ls -lh dist || true
+          # --- top-level .config ------------------------------------------------
+          # printf avoids heredoc indentation issues in YAML multi-line blocks.
+          printf '%s\n' \
+            'CONFIG_TARGET_x86=y' \
+            'CONFIG_TARGET_x86_64=y' \
+            'CONFIG_TARGET_MULTI_PROFILE=y' \
+            'CONFIG_TARGET_DEVICE_x86_64_DEVICE_generic=y' \
+            'CONFIG_KERNEL_GIT_CLONE_URI="https://gitlab.com/alfredchen/linux-prjc.git"' \
+            'CONFIG_KERNEL_GIT_REF="linux-6.6.y-prjc-lts"' \
+            > .config
 
-      - name: Upload build artifacts
+          # Expand to a full OpenWrt config using target defaults.
+          make defconfig
+
+          # --- kernel config fragment -------------------------------------------
+          # target/linux/x86/config-6.6 is the per-target kernel config fragment
+          # that OpenWrt merges with the kernel's Kconfig defaults during
+          # `make kernel_prepare`.  Appending the BMQ options here ensures they
+          # are present when the final kernel .config is generated.
+          printf '\n# BMQ (BitMap Queue) CPU Scheduler\nCONFIG_SCHED_ALT=y\nCONFIG_SCHED_BMQ=y\n# CONFIG_SCHED_PDS is not set\n' \
+            >> target/linux/x86/config-6.6
+
+      # ── Optional extra patches ──────────────────────────────────────────────
+      # Any *.patch files placed in the repository's bmq-patches/ directory are
+      # copied into the OpenWrt x86 patch set before the build starts.
+      # Leave bmq-patches/ empty (or absent) to skip this step.
+      - name: Copy additional BMQ patches
+        run: |
+          if [ -d bmq-patches ] && [ -n "$(ls -A bmq-patches 2>/dev/null)" ]; then
+            mkdir -p openwrt/target/linux/x86/patches-6.6/
+            cp -v bmq-patches/*.patch openwrt/target/linux/x86/patches-6.6/ 2>/dev/null || true
+            echo "Copied $(find bmq-patches -name '*.patch' | wc -l) patch file(s)."
+          else
+            echo "No extra patches in bmq-patches/ — skipping."
+          fi
+
+      # ── Build ───────────────────────────────────────────────────────────────
+      - name: Build firmware
+        working-directory: openwrt
+        run: |
+          # Attempt a fast parallel build first; fall back to single-threaded
+          # if it fails (parallel builds can hit race conditions on first run).
+          make -j$(nproc) V=s 2>&1 | tee /tmp/build.log || \
+            (echo "Parallel build failed — retrying single-threaded..." && \
+             make -j1 V=s 2>&1 | tee -a /tmp/build.log)
+
+      # ── Save build log (always, so failures are diagnosable) ────────────────
+      - name: Upload build log
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: openwrt-x86-squashfs
+          name: build-log
+          path: /tmp/build.log
+          retention-days: 7
+
+      # ── Collect images ──────────────────────────────────────────────────────
+      # OpenWrt always compresses its output images with gzip, producing
+      # *.img.gz files — never bare *.img.  Collect both squashfs (recommended)
+      # and ext4 combined images for both BIOS and UEFI boot targets.
+      - name: Package firmware images
+        run: |
+          mkdir -p dist
+
+          # squashfs — preferred for flash-based / embedded-style deployment
+          cp openwrt/bin/targets/x86/64/*squashfs-combined*.img.gz dist/ 2>/dev/null || true
+          # ext4 — writable rootfs variant
+          cp openwrt/bin/targets/x86/64/*ext4-combined*.img.gz     dist/ 2>/dev/null || true
+
+          if [ -z "$(ls -A dist 2>/dev/null)" ]; then
+            echo "ERROR: No firmware images found in bin/targets/x86/64/" >&2
+            echo "Contents of output directory:" >&2
+            ls -la openwrt/bin/targets/x86/64/ 2>/dev/null || \
+              echo "(output directory does not exist — build likely failed)" >&2
+            exit 1
+          fi
+
+          echo "Collected firmware images:"
+          ls -lh dist/
+
+      - name: Upload firmware artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: openwrt-x86-bmq
           path: dist/*
 
+  # ───────────────────────────────────────────────────────────────────────────
   create-release:
+  # ───────────────────────────────────────────────────────────────────────────
     name: Create GitHub Release
     needs: build
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Download build artifacts
+      # Download the firmware artifacts produced by the build job directly
+      # into release/ (actions/download-artifact@v4 places files directly under
+      # path when a specific artifact name is given, not in a subdirectory).
+      - name: Download firmware artifacts
         uses: actions/download-artifact@v4
         with:
-          path: artifacts
-
-      - name: Prepare release assets
-        run: |
-          mkdir -p release
-          if [ -d artifacts ]; then
-            # copy whatever was downloaded; if directory doesn't exist the
-            # download-artifact step found nothing and we just continue
-            find artifacts -type f -maxdepth 2 -exec cp {} release/ \;
-          else
-            echo "warning: no artifacts were downloaded, skipping copy"
-          fi
-          ls -lh release || true
+          name: openwrt-x86-bmq
+          path: release
 
       - name: Generate release tag
         id: tag
         run: |
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            TAG=${GITHUB_REF#refs/tags/}
+            TAG="${GITHUB_REF#refs/tags/}"
           else
             TIMESTAMP=$(date -u +"%Y%m%d-%H%M%S")
             TAG="openwrt-bmq-${TIMESTAMP}"
           fi
-          echo "tag=${TAG}" >> $GITHUB_OUTPUT
-          echo "timestamp=$(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> $GITHUB_OUTPUT
+          echo "tag=${TAG}"         >> "$GITHUB_OUTPUT"
+          echo "timestamp=$(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> "$GITHUB_OUTPUT"
 
       - name: Calculate checksums
+        working-directory: release
         run: |
-          cd release || exit 1
-          sha256sum * > SHA256SUMS.txt || true
-          cat SHA256SUMS.txt || true
+          if [ -z "$(ls -A .)" ]; then
+            echo "ERROR: release/ is empty — nothing to checksum or release." >&2
+            exit 1
+          fi
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
 
-      - name: Create Release
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
-          name: OpenWrt x86 BMQ ${{ steps.tag.outputs.tag }}
+          name: "OpenWrt x86/64 BMQ ${{ steps.tag.outputs.tag }}"
+          body: |
+            ## OpenWrt x86/64 — BMQ (BitMap Queue) CPU Scheduler
+
+            Built from **OpenWrt v24.10.5** (Linux 6.6) using the
+            [linux-prjc](https://gitlab.com/alfredchen/linux-prjc) kernel
+            (branch `linux-6.6.y-prjc-lts`) which carries the
+            **BMQ (BitMap Queue)** CPU scheduler patch by Alfred Chen.
+
+            ### Available Images
+
+            | Image | Boot firmware | Root filesystem |
+            |-------|---------------|-----------------|
+            | `*squashfs-combined.img.gz`     | Legacy BIOS | squashfs — read-only, recommended |
+            | `*squashfs-combined-efi.img.gz` | UEFI        | squashfs — read-only              |
+            | `*ext4-combined.img.gz`         | Legacy BIOS | ext4 — writable                   |
+            | `*ext4-combined-efi.img.gz`     | UEFI        | ext4 — writable                   |
+
+            ### Flash / Test
+
+            ```bash
+            # Decompress
+            gunzip openwrt-*-squashfs-combined.img.gz
+
+            # Write to a USB stick or disk (replace /dev/sdX carefully)
+            dd if=openwrt-*-squashfs-combined.img of=/dev/sdX bs=4M status=progress
+            sync
+
+            # Or test immediately with QEMU
+            qemu-system-x86_64 \
+              -drive file=openwrt-*-squashfs-combined.img,format=raw \
+              -m 256m -nographic
+            ```
+
+            ### Verify Integrity
+
+            ```bash
+            sha256sum -c SHA256SUMS.txt
+            ```
+
+            ---
+
+            **Build date:** ${{ steps.tag.outputs.timestamp }}
           files: release/*
           draft: false
           prerelease: false
