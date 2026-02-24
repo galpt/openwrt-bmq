@@ -33,6 +33,59 @@ jobs:
         uses: actions/checkout@v4
 
       # ── Dependencies ────────────────────────────────────────────────────────
+      # GitHub-hosted runners ship with a mirrorlist file that apt probes on
+      # every update.  If any mirror in the list is slow or unreachable the
+      # step can hang for several minutes before timing out.
+      # This step benchmarks the three most common Ubuntu archive endpoints
+      # with a 3-second curl probe and writes only the fastest one into the
+      # apt sources, then configures a short per-connection timeout so a bad
+      # host is abandoned quickly instead of being retried indefinitely.
+      - name: Select fastest apt mirror
+        run: |
+          MIRRORS=(
+            "http://archive.ubuntu.com/ubuntu"
+            "http://azure.archive.ubuntu.com/ubuntu"
+            "http://us.archive.ubuntu.com/ubuntu"
+          )
+          BEST_URL=""
+          BEST_TIME=9999
+
+          for URL in "${MIRRORS[@]}"; do
+            # Probe the Release file (small, always present) and record total time
+            T=$(curl -o /dev/null -s -w "%{time_total}" \
+              --max-time 3 --connect-timeout 3 \
+              "${URL}/dists/$(lsb_release -cs)/Release" 2>/dev/null || echo "9999")
+            echo "  ${URL} → ${T}s"
+            # Use awk for float comparison (bash can't do it natively)
+            if awk "BEGIN{exit !($T < $BEST_TIME)}"; then
+              BEST_TIME=$T
+              BEST_URL=$URL
+            fi
+          done
+
+          echo "Selected mirror: ${BEST_URL} (${BEST_TIME}s)"
+
+          # Replace every known mirror URL in apt sources with the winner.
+          # Handle both legacy sources.list and DEB822 *.sources (Ubuntu 24.04+).
+          for PATTERN in \
+            "http://archive.ubuntu.com/ubuntu" \
+            "http://azure.archive.ubuntu.com/ubuntu" \
+            "http://us.archive.ubuntu.com/ubuntu"; do
+            sudo sed -i "s|${PATTERN}|${BEST_URL}|g" \
+              /etc/apt/sources.list \
+              /etc/apt/sources.list.d/*.list \
+              /etc/apt/sources.list.d/*.sources 2>/dev/null || true
+          done
+
+          # Short per-connection timeout + retries so a flaky host is abandoned
+          # quickly and apt falls back to the next candidate automatically.
+          sudo tee /etc/apt/apt.conf.d/99-ci-speed > /dev/null << 'EOF'
+          Acquire::Retries "5";
+          Acquire::http::Timeout "10";
+          Acquire::https::Timeout "10";
+          Acquire::http::Pipeline-Depth "0";
+          EOF
+
       - name: Install build dependencies
         run: |
           sudo apt-get update

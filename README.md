@@ -235,6 +235,13 @@ dmesg | grep -i sched
   repository. Drop your own `*.patch` files there if you want to layer
   additional changes on top of `linux-prjc` without modifying the workflow.
 
+- **Apt mirror selection** is done before `apt-get update` runs. The pipeline
+  probes `archive.ubuntu.com`, `azure.archive.ubuntu.com`, and
+  `us.archive.ubuntu.com` with a 3-second `curl` timing check and rewrites
+  the apt sources to point at whichever responds fastest. A short per-connection
+  timeout (10 s) and 5 retries are also configured so a flaky host is abandoned
+  quickly instead of hanging the job for minutes.
+
 - **Build timeouts** in CI are set to 5 hours. A cold build with kernel
   compilation can take a long time on a shared GitHub runner.
 
