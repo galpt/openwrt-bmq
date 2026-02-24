@@ -259,10 +259,7 @@ jobs:
           body: |
             ## OpenWrt x86/64 — BMQ (BitMap Queue) CPU Scheduler
 
-            Built from **OpenWrt v24.10.5** (Linux 6.6) using the
-            [linux-prjc](https://gitlab.com/alfredchen/linux-prjc) kernel
-            (branch `linux-6.6.y-prjc-lts`) which carries the
-            **BMQ (BitMap Queue)** CPU scheduler patch by Alfred Chen.
+            Built from **OpenWrt v24.10.5** (Linux 6.6) using the [linux-prjc](https://gitlab.com/alfredchen/linux-prjc) kernel (branch `linux-6.6.y-prjc-lts`) which carries the **BMQ (BitMap Queue)** CPU scheduler patch by Alfred Chen.
 
             ### Available Images
 
