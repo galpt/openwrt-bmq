@@ -26,7 +26,7 @@ jobs:
   # ───────────────────────────────────────────────────────────────────────────
     name: Build OpenWrt x86/64 with BMQ Scheduler
     runs-on: ubuntu-latest
-    timeout-minutes: 720
+    timeout-minutes: 300
 
     steps:
       - name: Checkout repository

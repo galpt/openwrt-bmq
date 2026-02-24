@@ -235,7 +235,7 @@ dmesg | grep -i sched
   repository. Drop your own `*.patch` files there if you want to layer
   additional changes on top of `linux-prjc` without modifying the workflow.
 
-- **Build timeouts** in CI are set to 12 hours. A cold build with kernel
+- **Build timeouts** in CI are set to 5 hours. A cold build with kernel
   compilation can take a long time on a shared GitHub runner.
 
 ## Contributing
