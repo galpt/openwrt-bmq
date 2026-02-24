@@ -30,8 +30,7 @@ produces a ready-to-flash firmware image, no manual intervention required.
 **Current Branch**: `main`
 
 > [!NOTE]
-> This is an active experiment. The CI pipeline targets **OpenWrt v24.10.5**
-> (the latest stable release) with **Linux 6.6.x** on the `x86/64` platform.
+> This is an active experiment. The CI pipeline targets **OpenWrt v24.10.5** (the latest stable release) with **Linux 6.6.x** on the `x86/64` platform.
 > Builds are triggered manually to keep things deliberate.
 
 ## Features
@@ -138,8 +137,7 @@ locally, it will build in CI.
    ```
 
 > [!TIP]
-> OpenWrt compresses all output images with gzip. The files you are looking
-> for are `*.img.gz`, not bare `*.img`.
+> OpenWrt compresses all output images with gzip. The files you are looking for are `*.img.gz`, not bare `*.img`.
 
 ## CI Pipeline
 
@@ -166,9 +164,7 @@ The build log is always uploaded as an artifact â€” even when the build fails â€
 so there is always something to read when debugging.
 
 > [!NOTE]
-> The release tag is derived from the Git ref if you push a tag, or
-> auto-generated as `openwrt-bmq-YYYYMMDD-HHmmss` when triggered manually
-> against a branch.
+> The release tag is derived from the Git ref if you push a tag, or auto-generated as `openwrt-bmq-YYYYMMDD-HHmmss` when triggered manually against a branch.
 
 ## Artifact Release
 
@@ -255,8 +251,7 @@ bug reports, all of it.
 4. Open the pull request and describe what you changed and why.
 
 > [!NOTE]
-> Please do not add triggers that auto-run the workflow on every push. Builds
-> are expensive and we want them to be intentional.
+> Please do not add triggers that auto-run the workflow on every push. Builds are expensive and we want them to be intentional.
 
 ## License
 
